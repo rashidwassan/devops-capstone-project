@@ -12,12 +12,14 @@ from tests.factories import AccountFactory
 from service.common import status  # HTTP Status Codes
 from service.models import db, Account, init_db
 from service.routes import app
+from service import talisman
 
 DATABASE_URI = os.getenv(
     "DATABASE_URI", "postgresql://postgres:postgres@localhost:5432/postgres"
 )
 
 BASE_URL = "/accounts"
+HTTPS_ENVIRON = {'wsgi.url_scheme': 'https'}
 
 
 ######################################################################
@@ -34,6 +36,7 @@ class TestAccountService(TestCase):
         app.config["SQLALCHEMY_DATABASE_URI"] = DATABASE_URI
         app.logger.setLevel(logging.CRITICAL)
         init_db(app)
+        talisman.force_https = False
 
     @classmethod
     def tearDownClass(cls):
@@ -173,3 +176,30 @@ class TestAccountService(TestCase):
         """It should not allow an illegal method call"""
         resp = self.client.delete(BASE_URL)
         self.assertEqual(resp.status_code, status.HTTP_405_METHOD_NOT_ALLOWED)
+
+
+    ######################################################################
+    #  S E C U R I T Y   T E S T   C A S E S
+    ######################################################################
+
+    def test_force_to_https(self):
+        """A request should respond with the correct security headers"""
+
+        resp = self.client.get('/', environ_overrides=HTTPS_ENVIRON)
+
+        required_headers = {
+            'X-Frame-Options': 'SAMEORIGIN',
+            'X-XSS-Protection': '1; mode=block',
+            'X-Content-Type-Options': 'nosniff',
+            'Content-Security-Policy': 'default-src \'self\'; object-src \'none\'',
+            'Referrer-Policy': 'strict-origin-when-cross-origin'
+        }
+
+        for header, value in required_headers.items():
+            self.assertEqual(resp.headers.get(header), value)
+
+    def test_for_cors_headers(self):
+        """A request should respond with the correct CORS headers"""
+
+        resp = self.client.get('/', environ_overrides=HTTPS_ENVIRON)
+        self.assertEqual(resp.headers.get('Access-Control-Allow-Origin'), '*')
